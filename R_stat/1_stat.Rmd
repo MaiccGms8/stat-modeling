@@ -1,0 +1,393 @@
+---
+title: "Atividade prática 1 - Modelagem Estatística"
+author: "Maicon Henrique de Oliveira Gomes"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+## 1. Introdução
+
+O objetivo desta análise é investigar quais fatores estão associados ao desempenho dos estudantes em uma avaliação. Especificamente, busca-se verificar se existe associação entre as horas dedicadas aos estudos e a nota final obtida pelos estudantes.
+
+Além disso, será analisado se essa associação permanece após considerar outras variáveis relacionadas ao desempenho, como a frequência às aulas e o tipo de grupo de estudo, classificado em "Tradicional" ou "Projeto".
+
+A análise seguirá um fluxo composto por exploração dos dados, inferência estatística, regressão linear e diagnóstico do modelo. Dessa forma, pretende-se responder à seguinte questão:
+
+Existe associação entre as horas de estudo e a nota final, e essa relação permanece após considerar a frequência e o grupo de estudo?
+
+---
+
+## 2. Dados e preparação
+
+Para esta análise, foi utilizada uma base de dados simulada contendo informações de 80 estudantes.
+
+As variáveis consideradas são:
+
+* `aluno`: identificador do estudante;
+* `grupo`: tipo de grupo de estudo;
+* `horas_estudo`: quantidade de horas dedicadas aos estudos;
+* `frequencia`: percentual de frequência às aulas;
+* `nota_final`: nota obtida pelo estudante na avaliação.
+
+A base foi simulada de forma controlada, utilizando uma semente fixa para permitir a reprodução dos resultados.
+
+```{r dados}
+# Problema: Quais fatores estão associados ao desempenho dos estudantes em uma avaliação
+
+# 1. Base de dados simulada
+
+# Carregua o pacote dplyr
+library(dplyr)
+
+set.seed(123)
+n <- 80
+
+dados <- tibble::tibble(
+    aluno = 1:n,
+    grupo = sample(c("Tradicional", "Projeto"), n, TRUE),
+    horas_estudo = round(rnorm(n, mean = 6, sd = 2), 1),
+    frequencia = round(runif(n, 70, 100), 1),
+    nota_final = 45 + 4.2 * horas_estudo + 0.25 * frequencia + 
+        ifelse(grupo == "Projeto", 4, 0) + rnorm(n, 0, 7)
+)
+
+dados <- dados |>
+ mutate(
+    horas_estudo = pmax(horas_estudo, 0),
+    nota_final = pmin(pmax(nota_final, 0), 100)
+ )
+```
+
+A utilização de `set.seed(123)` garante que a base simulada possa ser reproduzida a partir do mesmo código.
+
+O tratamento realizado posteriormente limita as horas de estudo a valores não negativos e mantém as notas dentro do intervalo de 0 a 100.
+
+---
+
+## 3. Análise exploratória
+
+Antes da aplicação dos modelos estatísticos, foi realizada uma análise exploratória para compreender as características gerais dos dados e identificar possíveis associações iniciais entre as variáveis.
+
+### 3.1 Medidas-resumo
+
+Inicialmente, foram calculadas a média e o desvio-padrão da nota final, a média das horas de estudo e a correlação entre horas de estudo e nota final.
+
+```{r exploratoria_resumo}
+# 2. Análise exploratória
+
+# Carregua o pacote tidyverse
+library(tidyverse)
+
+# Distribuição e o relacionamento entre variáveis
+dados |> 
+    summarise(
+        media_nota = mean(nota_final),
+        dp_nota = sd(nota_final),
+        media_estudo = mean(horas_estudo),
+        cor_estudo_nota = cor(horas_estudo, nota_final)
+    )
+```
+
+A média da nota final foi de `r round(mean(dados$nota_final), 2)` pontos, com desvio-padrão de `r round(sd(dados$nota_final), 2)` pontos.
+
+A média de horas de estudo foi de `r round(mean(dados$horas_estudo), 2)` horas.
+
+A correlação de Pearson entre horas de estudo e nota final foi de `r round(cor(dados$horas_estudo, dados$nota_final), 3)`.
+
+Esse resultado indica a direção e a intensidade da associação linear entre as duas variáveis. Uma correlação positiva indica que, na amostra, valores maiores de horas de estudo tendem a estar associados a valores maiores de nota final.
+
+Entretanto, a correlação não deve ser interpretada como evidência de causalidade.
+
+### 3.2 Distribuição dos estudantes por grupo
+
+```{r grupos}
+dados |> 
+    count(grupo)
+```
+
+A distribuição dos estudantes entre os grupos permite verificar se existe algum desequilíbrio importante no tamanho das amostras antes da comparação das médias.
+
+Essa informação será considerada posteriormente no teste de hipótese que compara as notas dos grupos Tradicional e Projeto.
+
+### 3.3 Relação entre horas de estudo e nota final
+
+```{r grafico_exploratorio}
+ggplot(dados, aes(x = horas_estudo, y = nota_final, color = grupo)) +
+    geom_point(size = 2, alpha = 0.8) +
+    geom_smooth(method = "lm", se = TRUE) +
+    labs(x = "Horas de estudo", y = "Nota final", color = "Grupo")
+```
+
+O gráfico permite observar visualmente a relação entre horas de estudo e nota final, além de possibilitar uma comparação inicial entre os grupos.
+
+A reta de regressão representa a tendência linear estimada para os dados, enquanto a região ao redor da reta representa o intervalo de confiança da estimativa.
+
+A presença de uma tendência positiva é compatível com uma associação entre maior quantidade de horas de estudo e maiores notas. Entretanto, essa análise é exploratória e deve ser complementada pelos modelos estatísticos apresentados posteriormente.
+
+---
+
+## 4. Inferência e modelo
+
+### 4.1 Intervalo de confiança
+
+Foi calculado um intervalo de confiança de 95% para a média populacional da nota final.
+
+```{r ic}
+# 3. Intervalo de confiança
+
+# Estimando a média da nota final com incerteza
+media <- mean(dados$nota_final)
+dp <- sd(dados$nota_final)
+n <- nrow(dados)
+erro <- qt(0.975, df = n - 1) * dp / sqrt(n)
+
+ic_media <- tibble(
+    media = media,
+    limite_inferior = media - erro, 
+    limite_superior = media + erro
+)
+
+ic_media 
+```
+
+A média amostral da nota final foi de `r round(media, 2)` pontos.
+
+O intervalo de confiança de 95% foi de [`r round(media - erro, 2)`; `r round(media + erro, 2)`] pontos.
+
+Esse intervalo representa uma faixa de valores plausíveis para a média populacional da nota final, considerando as suposições do método utilizado.
+
+A amplitude do intervalo é de aproximadamente `r round(2 * erro, 2)` pontos, permitindo avaliar a precisão da estimativa da média.
+
+A interpretação frequentista do intervalo de confiança é que, em repetidas amostragens realizadas sob as mesmas condições, aproximadamente 95% dos intervalos construídos pelo mesmo procedimento conteriam o verdadeiro parâmetro populacional.
+
+---
+
+### 4.2 Teste de hipótese
+
+Para comparar o desempenho médio entre os grupos Tradicional e Projeto, foi utilizado um teste t para duas amostras.
+
+As hipóteses consideradas foram:
+
+* **H0:** as médias das notas finais são iguais entre os grupos Tradicional e Projeto;
+* **H1:** as médias das notas finais são diferentes entre os grupos Tradicional e Projeto.
+
+```{r teste_t}
+# 4. Teste de hipótese
+
+# Comparando a média da nota entre dois grupos, H0 = médias iguais e H1 = médias diferentes 
+teste_grupo <- t.test(nota_final ~ grupo, data = dados)
+teste_grupo
+```
+
+As médias e os desvios-padrão de cada grupo são apresentados abaixo:
+
+```{r resumo_grupo}
+dados |> 
+    group_by(grupo) |>
+    summarise(
+        media = mean(nota_final),
+        dp = sd(nota_final),
+        n = n(),
+        .groups = "drop"
+        )
+```
+
+O teste t apresentou p-valor de `r format.pval(teste_grupo$p.value, digits = 3, eps = 0.001)`.
+
+O intervalo de confiança de 95% para a diferença entre as médias foi de [`r round(teste_grupo$conf.int[1], 2)`; `r round(teste_grupo$conf.int[2], 2)`] pontos.
+
+Considerando um nível de significância de 5%, `r ifelse(teste_grupo$p.value < 0.05, "rejeita-se", "não se rejeita")` a hipótese nula.
+
+Assim, os dados `r ifelse(teste_grupo$p.value < 0.05, "fornecem evidências de uma diferença estatisticamente significativa entre as médias dos grupos", "não fornecem evidências suficientes de uma diferença estatisticamente significativa entre as médias dos grupos")`.
+
+É importante distinguir significância estatística de importância prática. Mesmo quando uma diferença é estatisticamente significativa, sua magnitude deve ser considerada para avaliar sua relevância no contexto do problema.
+
+---
+
+### 4.3 Regressão linear simples
+
+Para investigar a associação entre horas de estudo e nota final, foi ajustado um modelo de regressão linear simples.
+
+```{r modelo_1}
+# 5. Regressão linear simples
+
+# Modelando nota final a partir das horas de estudo
+modelo_1 <- lm(nota_final ~ horas_estudo, data = dados)
+summary(modelo_1)
+
+broom::tidy(modelo_1, conf.int = TRUE)
+broom::glance(modelo_1)
+```
+
+O coeficiente associado às horas de estudo representa a variação média estimada na nota final associada a um aumento de uma hora nas horas de estudo.
+
+Para apresentar esse resultado diretamente a partir do modelo ajustado:
+
+```{r resultados_modelo_1}
+coef_modelo_1 <- broom::tidy(modelo_1, conf.int = TRUE)
+ajuste_modelo_1 <- broom::glance(modelo_1)
+
+coef_modelo_1
+ajuste_modelo_1
+```
+
+O coeficiente estimado para `horas_estudo` foi de `r round(coef_modelo_1$estimate[coef_modelo_1$term == "horas_estudo"], 3)` pontos por hora.
+
+Isso significa que, no modelo simples, um aumento de uma hora nas horas de estudo está associado, em média, a uma variação estimada de `r round(coef_modelo_1$estimate[coef_modelo_1$term == "horas_estudo"], 3)` pontos na nota final.
+
+O intervalo de confiança de 95% para esse coeficiente foi de [`r round(coef_modelo_1$conf.low[coef_modelo_1$term == "horas_estudo"], 3)`; `r round(coef_modelo_1$conf.high[coef_modelo_1$term == "horas_estudo"], 3)`].
+
+O p-valor associado ao coeficiente foi `r format.pval(coef_modelo_1$p.value[coef_modelo_1$term == "horas_estudo"], digits = 3, eps = 0.001)`.
+
+O coeficiente de determinação foi R² = `r round(ajuste_modelo_1$r.squared, 3)`, indicando que aproximadamente `r round(100 * ajuste_modelo_1$r.squared, 1)`%** da variabilidade observada na nota final é explicada pelo modelo que utiliza apenas as horas de estudo como variável explicativa.
+
+É importante destacar que o modelo descreve uma associação entre as variáveis e, por si só, não estabelece uma relação causal.
+
+### Visualização do modelo simples
+
+```{r grafico_modelo_1}
+ggplot(dados, aes(horas_estudo, nota_final)) + 
+    geom_point(alpha = 0.8) +
+    geom_smooth(method = "lm", se = TRUE) + 
+    labs(x = "Horas de estudo", y = "Nota final")
+```
+
+O gráfico apresenta os valores observados e a reta de regressão estimada.
+
+A distribuição dos pontos em torno da reta auxilia na avaliação visual da relação linear entre as horas de estudo e a nota final.
+
+---
+
+### 4.4 Modelo com múltiplas variáveis
+
+Na etapa seguinte, foi ajustado um modelo de regressão linear múltipla incluindo `horas_estudo`, `frequencia` e `grupo`.
+
+```{r modelo_2}
+# 6. Modelo com mais de uma variável
+
+# Considerando frequência e grupo no mesmo modelo
+modelo_2 <- lm(nota_final ~ horas_estudo + frequencia + grupo, data = dados)
+
+summary(modelo_2)
+broom::tidy(modelo_2, conf.int = TRUE)
+broom::glance(modelo_2)
+
+anova(modelo_1, modelo_2)
+```
+
+O modelo múltiplo permite analisar a associação entre cada variável explicativa e a nota final considerando simultaneamente as demais variáveis incluídas no modelo.
+
+No caso de `horas_estudo`, o coeficiente representa a associação entre horas de estudo e nota final mantendo constantes a frequência e o grupo.
+
+Para apresentar os resultados dos coeficientes e das medidas de ajuste:
+
+```{r resultados_modelo_2}
+coef_modelo_2 <- broom::tidy(modelo_2, conf.int = TRUE)
+ajuste_modelo_2 <- broom::glance(modelo_2)
+
+coef_modelo_2
+ajuste_modelo_2
+```
+
+O coeficiente estimado para `horas_estudo` foi de `r round(coef_modelo_2$estimate[coef_modelo_2$term == "horas_estudo"], 3)` pontos por hora.
+
+O p-valor associado foi de `r format.pval(coef_modelo_2$p.value[coef_modelo_2$term == "horas_estudo"], digits = 3, eps = 0.001)`.
+
+Dessa forma, após considerar simultaneamente as demais variáveis incluídas no modelo, os resultados **`r ifelse(coef_modelo_2$p.value[coef_modelo_2$term == "horas_estudo"] < 0.05, "indicam uma associação estatisticamente significativa entre horas de estudo e nota final", "não fornecem evidências suficientes de uma associação estatisticamente significativa entre horas de estudo e nota final")`**.
+
+O coeficiente de determinação do modelo múltiplo foi R² = `r round(ajuste_modelo_2$r.squared, 3)`, enquanto o R² ajustado foi `r round(ajuste_modelo_2$adj.r.squared, 3)`.
+
+Essas medidas permitem avaliar quanto da variabilidade da nota final é explicada pelo conjunto de variáveis incluídas no modelo.
+
+### Comparação entre os modelos
+
+Para comparar o modelo simples e o modelo múltiplo, foi utilizado o teste de comparação de modelos aninhados já presente no código desenvolvido:
+
+```{r comparacao_modelos}
+anova(modelo_1, modelo_2)
+```
+
+O teste de comparação dos modelos apresentou p-valor de `r format.pval(anova(modelo_1, modelo_2)[["Pr(>F)"]][2], digits = 3, eps = 0.001)`.
+
+Assim, considerando um nível de significância de 5%, `r ifelse(anova(modelo_1, modelo_2)[["Pr(>F)"]][2] < 0.05, "há evidências de que o modelo múltiplo apresenta melhoria estatisticamente significativa no ajuste em relação ao modelo simples", "não há evidências suficientes de que a inclusão das novas variáveis tenha produzido uma melhoria estatisticamente significativa no ajuste em relação ao modelo simples")`.
+
+Além do teste estatístico, a comparação deve considerar o R² ajustado, a interpretação dos coeficientes e a finalidade da análise.
+
+Portanto, a inclusão de novas variáveis não deve ser considerada automaticamente uma melhoria apenas porque o R² aumenta.
+
+---
+
+## 5. Diagnóstico do modelo
+
+A validade da regressão linear depende de algumas suposições relacionadas aos resíduos.
+
+Para avaliá-las, foram utilizados os quatro gráficos diagnósticos do modelo múltiplo.
+
+```{r diagnostico}
+# 7. Diagnóstico do modelo 
+
+# Verificação das suposições
+par(mfrow = c(2,2))
+plot(modelo_2)
+par(mfrow = c(1,1))
+```
+
+### Linearidade
+
+O gráfico Residuals vs Fitted permite verificar se existe algum padrão sistemático nos resíduos.
+
+Um comportamento aproximadamente aleatório dos resíduos ao redor de zero é compatível com a hipótese de linearidade.
+
+### Normalidade dos resíduos
+
+O gráfico Normal Q-Q permite avaliar se os resíduos apresentam comportamento aproximadamente normal.
+
+Quanto mais próximos os pontos estiverem da linha de referência, maior a compatibilidade com essa suposição.
+
+### Homocedasticidade
+
+O gráfico Scale-Location permite verificar se a variabilidade dos resíduos permanece aproximadamente constante ao longo dos valores ajustados.
+
+Uma dispersão aproximadamente uniforme dos pontos é compatível com a hipótese de homocedasticidade.
+
+### Observações influentes
+
+O gráfico Residuals vs Leverage auxilia na identificação de observações que podem exercer influência excessiva sobre o modelo.
+
+A distância de Cook também auxilia nessa avaliação.
+
+A interpretação final desses pressupostos deve ser realizada a partir dos gráficos efetivamente produzidos pelo modelo, evitando conclusões baseadas apenas em valores numéricos.
+
+---
+
+## 6. Conclusão
+
+A análise teve como objetivo investigar a associação entre as horas de estudo e a nota final dos estudantes, considerando também a frequência às aulas e o grupo de estudo.
+
+A análise exploratória permitiu observar as características gerais da base e identificar inicialmente a relação entre horas de estudo e desempenho. A correlação calculada forneceu uma medida da associação linear entre essas variáveis, enquanto o gráfico permitiu visualizar essa relação e sua dispersão.
+
+O intervalo de confiança de 95% forneceu uma faixa de valores plausíveis para a média populacional da nota final, permitindo representar a incerteza associada à estimativa obtida a partir da amostra.
+
+O teste t possibilitou comparar as médias dos grupos Tradicional e Projeto. A decisão sobre a hipótese nula foi baseada no p-valor obtido, considerando o nível de significância de 5%. A interpretação deve, entretanto, considerar também a magnitude da diferença observada entre os grupos.
+
+Na regressão linear simples, as horas de estudo foram utilizadas como variável explicativa da nota final. O coeficiente estimado representa a associação média entre essas variáveis, enquanto o R² indica a proporção da variabilidade da nota final explicada pelo modelo.
+
+Em seguida, foi ajustado um modelo de regressão linear múltipla incluindo horas de estudo, frequência e grupo. Nesse modelo, o coeficiente de horas de estudo representa sua associação com a nota final após considerar as demais variáveis incluídas.
+
+A comparação entre os modelos, realizada por meio de `anova(modelo_1, modelo_2)`, permite avaliar se a inclusão de frequência e grupo produz uma melhoria estatisticamente significativa no ajuste em relação ao modelo que utiliza somente horas de estudo.
+
+Por fim, o diagnóstico dos resíduos permite avaliar se as principais suposições da regressão linear são razoavelmente atendidas, incluindo linearidade, normalidade dos resíduos, homocedasticidade e presença de observações potencialmente influentes.
+
+Dessa forma, a análise integra exploração, inferência, teste de hipóteses, regressão linear e diagnóstico de modelos para investigar os fatores associados ao desempenho dos estudantes.
+
+É importante ressaltar que os dados utilizados são simulados** e que os resultados representam associações observadas nessa base de dados. Portanto, os resultados não devem ser interpretados automaticamente como evidência de relações causais.
